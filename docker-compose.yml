@@ -1,0 +1,19 @@
+name: murmur
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports: ["127.0.0.1:5432:5432"]
+    environment:
+      POSTGRES_USER: murmur
+      POSTGRES_PASSWORD: murmur_local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/01-init-databases.sql:/docker-entrypoint-initdb.d/01-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U murmur"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata: {}

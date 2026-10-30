@@ -16,7 +16,7 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **Scope:**
   - `AGENTS.md` (layout, package-by-feature, code rules, sample)
   - `CLAUDE.md` containing `@AGENTS.md`, so Claude Code loads the same rules
-  - `.editorconfig`, `.gitignore`, `.env.example`
+  - `.editorconfig`, `.gitignore`, `.env.example`, `.cursorignore`
   - `README.md` with the "Agent skills" table; optionally install those skills
 - **Done when:** `AGENTS.md` and `CLAUDE.md` are committed. Ask your agent "Where does `FollowService` go, and is it public?" and it answers `services/user-service/src/main/java/com/murmur/userservice/follow/FollowService.java`, package-private.
 - **Learn:** package-by-feature, package-private boundaries, Java 21 records.
@@ -26,7 +26,7 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **New idea:** A Maven reactor with one parent POM builds one Spring Boot jar per service.
 - **Depends on:** T00
 - **Scope:**
-  - Root `pom.xml` (Java 21, Boot 4.1.2, Maven wrapper, Spotless with palantir-java-format; verify plugin versions)
+  - Root `pom.xml` (Java 21, Boot 4.1.2, Maven wrapper with `distributionSha256Sum`, Spotless with palantir-java-format; verify plugin versions)
   - `services/user-service` with `GET /health`
 - **Done when:** `./mvnw package` builds `services/user-service/target/app.jar`, and `curl localhost:8001/health` returns `{"status":"UP"}`. MockMvc test for `/health`.
 - **Learn:** reactor builds, Boot 4 starter names (verify), `finalName`.
