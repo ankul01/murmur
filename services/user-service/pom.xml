@@ -23,6 +23,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc-test</artifactId>
       <scope>test</scope>
+      <exclusions>
+        <!-- MockMvc tests use starter-test (JUnit 5, AssertJ, Mockito). RestTestClient is unused. -->
+        <exclusion>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-resttestclient</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
   </dependencies>
 
