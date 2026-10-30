@@ -1,4 +1,4 @@
-# Twitter Clone — Learning Backlog
+# Murmur — Learning Backlog
 
 Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Code follows AGENTS.md.
 
@@ -16,9 +16,9 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **Scope:**
   - `AGENTS.md` (layout, package-by-feature, code rules, sample)
   - `CLAUDE.md` containing `@AGENTS.md`, so Claude Code loads the same rules
-  - `.editorconfig`, plus Spotless with palantir-java-format in the parent POM (verify plugin versions)
+  - `.editorconfig`, `.gitignore`, `.env.example`
   - `README.md` with the "Agent skills" table; optionally install those skills
-- **Done when:** `AGENTS.md` and `CLAUDE.md` are committed. Ask your agent "Where does `FollowService` go, and is it public?" and it answers `services/user-service/src/main/java/io/github/<github-user>/twitter/userservice/follow/FollowService.java`, package-private.
+- **Done when:** `AGENTS.md` and `CLAUDE.md` are committed. Ask your agent "Where does `FollowService` go, and is it public?" and it answers `services/user-service/src/main/java/com/murmur/userservice/follow/FollowService.java`, package-private.
 - **Learn:** package-by-feature, package-private boundaries, Java 21 records.
 - **Out:** any Java code (T01 starts that).
 
@@ -26,9 +26,8 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **New idea:** A Maven reactor with one parent POM builds one Spring Boot jar per service.
 - **Depends on:** T00
 - **Scope:**
-  - Root `pom.xml` (Java 21, Boot 4.1.2, Maven wrapper)
+  - Root `pom.xml` (Java 21, Boot 4.1.2, Maven wrapper, Spotless with palantir-java-format; verify plugin versions)
   - `services/user-service` with `GET /health`
-  - `.gitignore`, `.env.example`
 - **Done when:** `./mvnw package` builds `services/user-service/target/app.jar`, and `curl localhost:8001/health` returns `{"status":"UP"}`. MockMvc test for `/health`.
 - **Learn:** reactor builds, Boot 4 starter names (verify), `finalName`.
 - **Out:** database, Docker.
@@ -36,8 +35,8 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 ### T02 · Compose with an empty Postgres
 - **New idea:** Docker Compose runs infrastructure, and an init script creates one database per service.
 - **Depends on:** T01
-- **Scope:** `docker-compose.yml` with `postgres` only, plus `infra/postgres/01-init-databases.sql` (`users`, `tweets`)
-- **Done when:** `docker compose exec postgres psql -U twitter -l` lists `users` and `tweets`.
+- **Scope:** `docker-compose.yml` with `postgres` only, plus `infra/postgres/01-init-databases.sql` (`users`, `posts`)
+- **Done when:** `docker compose exec postgres psql -U murmur -l` lists `users` and `posts`.
 - **Learn:** init scripts run only on a fresh volume (`down -v`).
 - **Out:** Redis, Kafka, tables.
 
@@ -71,39 +70,39 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **Learn:** keyset pagination by follower id.
 - **Out:** callers of these routes.
 
-## Part B — Tweets
+## Part B — Posts
 
-### T06 · Create a tweet
-- **New idea:** tweet-service owns the `tweets` table and counts text length in code points.
+### T06 · Create a post
+- **New idea:** post-service owns the `posts` table and counts text length in code points.
 - **Depends on:** T03
-- **Scope:** `services/tweet-service`, `tweets` table, `POST /tweets`
-- **Done when:** `curl -X POST localhost:8002/tweets -H "X-User-Id: $ADA" -d '{"text":"hi"}'` → `201`. MockMvc tests: 140 emoji → `201`, 141 characters → `400`.
+- **Scope:** `services/post-service`, `posts` table, `POST /posts`
+- **Done when:** `curl -X POST localhost:8002/posts -H "X-User-Id: $ADA" -d '{"text":"hi"}'` → `201`. MockMvc tests: 140 emoji → `201`, 141 characters → `400`.
 - **Learn:** UTF-16 vs code points, `created_at` taken from the UUIDv7.
 - **Out:** delete, reads, Kafka.
 
 ### T07 · Soft delete and batch get
-- **New idea:** A soft-deleted tweet stays in the table but disappears from the batch read.
+- **New idea:** A soft-deleted post stays in the table but disappears from the batch read.
 - **Depends on:** T06
-- **Scope:** `DELETE /tweets/{id}`, `GET /tweets?ids=`
-- **Done when:** after the owner deletes a tweet (`204`), `GET /tweets?ids=<it>,<other>` returns only `<other>`. MockMvc test: deleting someone else's tweet → `404`.
+- **Scope:** `DELETE /posts/{id}`, `GET /posts?ids=`
+- **Done when:** after the owner deletes a post (`204`), `GET /posts?ids=<it>,<other>` returns only `<other>`. MockMvc test: deleting someone else's post → `404`.
 - **Learn:** partial index `WHERE deleted_at IS NULL`.
 - **Out:** timeline filtering.
 
 ### T08 · By-author query and profile timeline
-- **New idea:** "Latest live tweets by these authors, older than the cursor" is one indexed query, and it serves both the profile page and fan-out on read.
+- **New idea:** "Latest live posts by these authors, older than the cursor" is one indexed query, and it serves both the profile page and fan-out on read.
 - **Depends on:** T07
-- **Scope:** `POST /tweets/by-authors`, `GET /users/{id}/tweets?cursor=&limit=`
-- **Done when:** with 25 tweets, paging the profile with `limit=10` returns 10, 10, then 5 items with `nextCursor:null`. MockMvc test for the `before` cursor.
-- **Learn:** tweetId as the cursor, `EXPLAIN` on `(user_id, id DESC)`.
+- **Scope:** `POST /posts/by-authors`, `GET /users/{id}/posts?cursor=&limit=`
+- **Done when:** with 25 posts, paging the profile with `limit=10` returns 10, 10, then 5 items with `nextCursor:null`. MockMvc test for the `before` cursor.
+- **Learn:** postId as the cursor, `EXPLAIN` on `(user_id, id DESC)`.
 - **Out:** home timeline.
 
 ## Part C — Events and fan-out on write
 
-### T09 · Publish tweet.created
+### T09 · Publish post.created
 - **New idea:** A service publishes an event to Kafka after its database commit.
 - **Depends on:** T08
-- **Scope:** Kafka and `kafka-init` added to Compose; tweet-service sends `tweet.created`, keyed by `authorId`.
-- **Done when:** `docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:19092 --topic tweet.created --from-beginning` shows the event after a curl tweet.
+- **Scope:** Kafka and `kafka-init` added to Compose; post-service sends `post.created`, keyed by `authorId`.
+- **Done when:** `docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:19092 --topic post.created --from-beginning` shows the event after a curl post.
 - **Learn:** listeners (`localhost:9092` vs `kafka:19092`), keys and partitions, the dual-write gap.
 - **Out:** consumers.
 
@@ -116,22 +115,22 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **Out:** consumers.
 
 ### T11 · Fan-out worker: write strategy
-- **New idea:** A Kafka consumer pushes each tweet id into every follower's Redis ZSET.
+- **New idea:** A Kafka consumer pushes each post id into every follower's Redis ZSET.
 - **Depends on:** T10
 - **Scope:**
   - `services/fanout-worker` and Redis added to Compose
-  - `@KafkaListener` on `tweet.created`, using group `fanout-workers`
+  - `@KafkaListener` on `post.created`, using group `fanout-workers`
   - Paged followers, ZADD, trim
-- **Done when:** after Grace follows Ada and Ada tweets, `redis-cli ZRANGE timeline:$GRACE 0 -1 WITHSCORES` shows the tweet id with its millisecond score.
+- **Done when:** after Grace follows Ada and Ada posts, `redis-cli ZRANGE timeline:$GRACE 0 -1 WITHSCORES` shows the post id with its millisecond score.
 - **Learn:** consumer groups, idempotent ZADD, `TIMELINE_MAX_LENGTH` trim.
 - **Out:** reading the timeline, backfill, strategies.
 
 ### T12 · Timeline read
-- **New idea:** The home timeline is a Redis range, then a tweet batch, then a user batch, paged by tweetId.
+- **New idea:** The home timeline is a Redis range, then a post batch, then a user batch, paged by postId.
 - **Depends on:** T11
 - **Scope:** `services/timeline-service`, `GET /timeline?cursor=&limit=` (write strategy only)
-- **Done when:** Grace's `curl localhost:8004/timeline` shows Ada's tweet with handle and display name. With 25 tweets and `limit=10`, three pages come back with no duplicates. MockMvc test with stubbed user and tweet services.
-- **Learn:** hydration, why the cursor is the tweetId.
+- **Done when:** Grace's `curl localhost:8004/timeline` shows Ada's post with handle and display name. With 25 posts and `limit=10`, three pages come back with no duplicates. MockMvc test with stubbed user and post services.
+- **Learn:** hydration, why the cursor is the postId.
 - **Out:** filtering, pull.
 
 ### T13 · Filtering deletes and unfollows on read
@@ -143,36 +142,36 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **Out:** pruning Redis.
 
 ### T14 · Follow backfill
-- **New idea:** On follow, the worker copies the followee's latest N tweets into the follower's ZSET.
+- **New idea:** On follow, the worker copies the followee's latest N posts into the follower's ZSET.
 - **Depends on:** T13
 - **Scope:** `@KafkaListener` on `follow.changed`; `FOLLOW_BACKFILL_COUNT`.
-- **Done when:** Ada tweets 3 times, then Linus follows Ada, and Linus's timeline shows all 3.
-- **Learn:** why "latest N" closes the follow/tweet race.
+- **Done when:** Ada posts 3 times, then Linus follows Ada, and Linus's timeline shows all 3.
+- **Learn:** why "latest N" closes the follow/post race.
 - **Out:** unfollow handling (lazy).
 
 ## Part D — Strategies
 
 ### T15 · Fan-out on read
-- **New idea:** With `FANOUT_STRATEGY=read`, the worker writes nothing, and the timeline pulls tweets for all followees.
+- **New idea:** With `FANOUT_STRATEGY=read`, the worker writes nothing, and the timeline pulls posts for all followees.
 - **Depends on:** T14
 - **Scope:** strategy setting in the worker and timeline-service; the pull path.
-- **Done when:** with `read`, a new tweet shows up immediately even with the worker stopped, and `redis-cli EXISTS timeline:$GRACE` stays unchanged.
+- **Done when:** with `read`, a new post shows up immediately even with the worker stopped, and `redis-cli EXISTS timeline:$GRACE` stays unchanged.
 - **Learn:** read cost grows with the following count.
 - **Out:** celebrities.
 
-### T16 · Own tweets in the home timeline
-- **New idea:** The viewer's own tweets join the home timeline as one extra author in the pull path, under every strategy.
+### T16 · Own posts in the home timeline
+- **New idea:** The viewer's own posts join the home timeline as one extra author in the pull path, under every strategy.
 - **Depends on:** T15
-- **Scope:** `INCLUDE_OWN_TWEETS` (default `true`) in timeline-service; the viewer is added to the pull authors and to the unfollow-filter set.
-- **Done when:** under `write` with the worker stopped, Ada tweets, and her own timeline shows it immediately. With `INCLUDE_OWN_TWEETS=false` it doesn't. MockMvc test with stubbed services.
-- **Learn:** read-your-own-writes, and why pulling your own tweets is cheaper than pushing them.
+- **Scope:** `INCLUDE_OWN_POSTS` (default `true`) in timeline-service; the viewer is added to the pull authors and to the unfollow-filter set.
+- **Done when:** under `write` with the worker stopped, Ada posts, and her own timeline shows it immediately. With `INCLUDE_OWN_POSTS=false` it doesn't. MockMvc test with stubbed services.
+- **Learn:** read-your-own-writes, and why pulling your own posts is cheaper than pushing them.
 - **Out:** fan-out into your own ZSET.
 
 ### T17 · Hybrid with celebrity merge
-- **New idea:** Celebrities skip push, and the timeline merges their tweets on read with the ZSET.
+- **New idea:** Celebrities skip push, and the timeline merges their posts on read with the ZSET.
 - **Depends on:** T15
 - **Scope:** `hybrid` in the worker (skip fan-out and backfill) and in the timeline (merge celebrities).
-- **Done when:** with `hybrid` and threshold 1, Ada is a celebrity. Her new tweet is not in Grace's ZSET but does appear in Grace's timeline.
+- **Done when:** with `hybrid` and threshold 1, Ada is a celebrity. Her new post is not in Grace's ZSET but does appear in Grace's timeline.
 - **Learn:** merge correctness across two sources.
 - **Out:** rebuild.
 
@@ -180,7 +179,7 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
 - **New idea:** One key=value log line per fan-out and per read makes strategy costs measurable.
 - **Depends on:** T17
 - **Scope:** log lines (DESIGN §4.11), `scripts/seed.sh`
-- **Done when:** after `seed.sh`, a `normal_author` tweet logs `zadds=50`, and a `celeb_author` tweet under `hybrid` logs `skip=celebrity`.
+- **Done when:** after `seed.sh`, a `normal_author` post logs `zadds=50`, and a `celeb_author` post under `hybrid` logs `skip=celebrity`.
 - **Learn:** measuring before optimizing.
 - **Out:** metrics stacks.
 

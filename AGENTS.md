@@ -17,7 +17,7 @@ Not allowed: JPA/Hibernate, Lombok, WebFlux/WebClient, Flyway, MapStruct, Feign.
 
 ## Layout
 ```text
-twitter-clone/
+murmur/
 ├── AGENTS.md  CLAUDE.md  DESIGN.md  BACKLOG.md  EXPERIMENTS.md  README.md
 ├── pom.xml  mvnw  mvnw.cmd  .mvn/
 ├── .gitignore  .env.example  .editorconfig
@@ -26,16 +26,16 @@ twitter-clone/
 ├── scripts/  seed.sh  smoke.sh
 ├── libs/common/                         # only: Ids (UUIDv7), X-User-Id resolution
 └── services/
-    ├── user-service/   tweet-service/   timeline-service/   fanout-worker/
+    ├── user-service/   post-service/   timeline-service/   fanout-worker/
 ```
 
-Each module uses the standard Maven layout. Base package: `io.github.<github-user>.twitter.<module>`, with no dashes (`userservice`, `tweetservice`, `timelineservice`, `fanoutworker`, `common`).
+Each module uses the standard Maven layout. Base package: `com.murmur.<module>`, with no dashes (`userservice`, `postservice`, `timelineservice`, `fanoutworker`, `common`).
 
 ```text
 services/user-service/
 ├── pom.xml
 └── src/
-    ├── main/java/io/github/<github-user>/twitter/userservice/
+    ├── main/java/com/murmur/userservice/
     │   ├── UserServiceApplication.java
     │   ├── HealthController.java
     │   ├── user/                       # feature package
@@ -51,7 +51,7 @@ services/user-service/
     │   └── config/
     │       └── AppProperties.java      # @ConfigurationProperties record
     ├── main/resources/  application.yml  schema.sql
-    └── test/java/io/github/<github-user>/twitter/userservice/user/UserControllerTest.java
+    └── test/java/com/murmur/userservice/user/UserControllerTest.java
 ```
 
 ## Code rules
@@ -142,7 +142,7 @@ class UserRepository {
     }
 }
 
-// common: io.github.<github-user>.twitter.common.Ids
+// common: com.murmur.common.Ids
 public final class Ids {
     private Ids() {}
     public static UUID newId() { return UuidCreator.getTimeOrderedEpoch(); }   // UUIDv7

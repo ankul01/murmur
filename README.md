@@ -1,6 +1,6 @@
-# twitter-clone (learning project)
+# murmur (learning project)
 
-A hands-on Twitter clone for learning timeline fan-out (write, read, and hybrid) and AWS on a $0 Free plan.
+A hands-on Murmur for learning timeline fan-out (write, read, and hybrid) and AWS on a $0 Free plan.
 
 - Design: [DESIGN.md](DESIGN.md)
 - Tasks: [BACKLOG.md](BACKLOG.md), starting at T00

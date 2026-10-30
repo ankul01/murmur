@@ -1,4 +1,4 @@
-# Twitter Clone — Learning Design (HLD, LLD, Local, AWS Free Plan)
+# Murmur — Learning Design (HLD, LLD, Local, AWS Free Plan)
 
 One document for the whole project. It replaces the earlier DESIGN.md, LOCAL_DEV.md, and DEPLOYMENT.md.
 
@@ -21,7 +21,7 @@ It runs on a laptop first, then on one EC2 instance. It is never exposed to the 
 
 - Create a user
 - Follow and unfollow
-- Create a tweet (text only) and soft-delete it
+- Create a post (text only) and soft-delete it
 - Home timeline with cursor pagination
 - Three fan-out strategies, switchable with one setting
 - Log lines and experiments that make the trade-offs visible
@@ -31,7 +31,7 @@ It runs on a laptop first, then on one EC2 instance. It is never exposed to the 
 - Images and media (see §9 v2)
 - Login and auth: no JWT, no Cognito. Identity is a header, and safety comes from the network.
 - API Gateway, load balancers, rate limits
-- Likes, replies, retweets, search, DMs, notifications, websockets
+- Likes, replies, reposts, search, DMs, notifications, websockets
 - Flyway, retries, dead-letter topics, tracing, metrics stacks, CI/CD, Terraform
 - Managed Kafka/Redis, ECS, or anything that costs money on AWS
 
@@ -46,16 +46,16 @@ It runs on a laptop first, then on one EC2 instance. It is never exposed to the 
 | F1 | Create a user with a unique handle and a display name. |
 | F2 | Follow or unfollow another user. Repeats are idempotent. No self-follow. |
 | F3 | Maintain follower and following counts and an `is_celebrity` flag. |
-| F4 | Post a tweet with 1–140 Unicode code points of text. |
-| F5 | Soft-delete your own tweet. It disappears from every timeline on the next read. |
-| F6 | Home timeline: tweets from people you follow **plus your own tweets**, newest first, cursor-paginated. Own tweets can be turned off with `INCLUDE_OWN_TWEETS=false`. |
-| F8 | Profile timeline: a user's own live tweets, newest first, cursor-paginated (`GET /users/{id}/tweets`). |
+| F4 | Post a post with 1–140 Unicode code points of text. |
+| F5 | Soft-delete your own post. It disappears from every timeline on the next read. |
+| F6 | Home timeline: posts from people you follow **plus your own posts**, newest first, cursor-paginated. Own posts can be turned off with `INCLUDE_OWN_POSTS=false`. |
+| F8 | Profile timeline: a user's own live posts, newest first, cursor-paginated (`GET /users/{id}/posts`). |
 | F7 | Strategy setting `FANOUT_STRATEGY = write \| read \| hybrid` changes how the timeline is built, without any code change. |
 
 ### Non-functional (learning-sized)
 
 - Read-heavy workload. The timeline should feel instant on the cached path, and logs show the milliseconds.
-- Strong consistency inside each database. The timeline is **eventually consistent**: a second or two of lag after a tweet is expected under `write`.
+- Strong consistency inside each database. The timeline is **eventually consistent**: a second or two of lag after a post is expected under `write`.
 - Everything fits on one 4–8 GB machine.
 
 ---
@@ -67,8 +67,8 @@ It runs on a laptop first, then on one EC2 instance. It is never exposed to the 
 | Service | Port | Responsibility | Owns |
 | --- | --- | --- | --- |
 | **user-service** | 8001 | Users, follows, counts, celebrity flag. Publishes `follow.changed`. | Postgres database `users` (tables `users`, `follows`) |
-| **tweet-service** | 8002 | Create, batch-get, by-author list, soft-delete. Publishes `tweet.created`. | Postgres database `tweets` (table `tweets`) |
-| **timeline-service** | 8004 | `GET /timeline`: reads Redis and/or pulls tweets, merges, filters, hydrates. | Nothing durable. Reads `timeline:{userId}`. |
+| **post-service** | 8002 | Create, batch-get, by-author list, soft-delete. Publishes `post.created`. | Postgres database `posts` (table `posts`) |
+| **timeline-service** | 8004 | `GET /timeline`: reads Redis and/or pulls posts, merges, filters, hydrates. | Nothing durable. Reads `timeline:{userId}`. |
 | **fanout-worker** | 8005 | Consumes Kafka and writes follower timelines into Redis. | Writes `timeline:{userId}` |
 
 Port 8003 is intentionally unused; it is reserved for the v2 media-service.
@@ -81,21 +81,21 @@ Port 8003 is intentionally unused; it is reserved for the v2 media-service.
       ┌──────────────────┼────────────────────┐
       ▼                  ▼                    ▼
 ┌─────────────┐   ┌─────────────┐     ┌────────────────┐
-│ user-service│   │tweet-service│     │timeline-service│
+│ user-service│   │post-service │     │timeline-service│
 │    :8001    │   │    :8002    │     │     :8004      │
 └──┬───────┬──┘   └──┬───────┬──┘     └──┬──────────┬──┘
-   │       │         │       │           │ reads    │ calls user + tweet
+   │       │         │       │           │ reads    │ calls user + post
    ▼       │         ▼       │           ▼          │ (following, batch)
 ┌────────┐ │     ┌────────┐  │       ┌────────┐     │
 │Postgres│ │     │Postgres│  │       │ Redis  │◀────┼──────────┐
-│ users  │ │     │ tweets │  │       │timeline│     │          │ ZADD / trim
+│ users  │ │     │ posts  │  │       │timeline│     │          │ ZADD / trim
 └────────┘ │     └────────┘  │       └────────┘     │          │
-           │ follow.changed  │ tweet.created        │   ┌──────┴───────┐
+           │ follow.changed  │ post.created         │   ┌──────┴───────┐
            └────────────▶ Kafka ◀────────┘          │   │ fanout-worker│
                             │                       │   │    :8005     │
                             └──────────────────────────▶└──┬───────────┘
                                                             │ calls user (author, followers)
-                                                            │ calls tweet (backfill)
+                                                            │ calls post (backfill)
 ```
 
 ### Data ownership rules
@@ -108,25 +108,25 @@ Port 8003 is intentionally unused; it is reserved for the v2 media-service.
 
 | Topic | Producer | Consumer | Key | When |
 | --- | --- | --- | --- | --- |
-| `tweet.created` | tweet-service | fanout-worker | `authorId` | After the tweet row commits |
+| `post.created` | post-service | fanout-worker | `authorId` | After the post row commits |
 | `follow.changed` | user-service | fanout-worker | `followerId` | After a follow row is actually inserted or deleted (not on idempotent repeats) |
 
-There is no `tweet.deleted` event. Deletes are handled when the timeline is read.
+There is no `post.deleted` event. Deletes are handled when the timeline is read.
 
 ### Fan-out strategies
 
 | | **write** (push) | **read** (pull) | **hybrid** |
 | --- | --- | --- | --- |
-| On tweet | Worker ZADDs into every follower's ZSET | Worker does nothing | Normal author: push. Celebrity: nothing. |
-| On follow | Worker backfills the followee's latest tweets | Nothing | Normal followee: backfill. Celebrity: nothing. |
-| On read | Read the ZSET, hydrate | Load following list, query tweets by all followees, merge | Read the ZSET **plus** query tweets by followed celebrities, merge |
-| Write cost | O(followers) Redis writes per tweet | O(1) | O(followers) for normal authors only |
+| On post | Worker ZADDs into every follower's ZSET | Worker does nothing | Normal author: push. Celebrity: nothing. |
+| On follow | Worker backfills the followee's latest posts | Nothing | Normal followee: backfill. Celebrity: nothing. |
+| On read | Read the ZSET, hydrate | Load following list, query posts by all followees, merge | Read the ZSET **plus** query posts by followed celebrities, merge |
+| Write cost | O(followers) Redis writes per post | O(1) | O(followers) for normal authors only |
 | Read cost | 1 Redis range plus batch get | One SQL over all followees (grows with following count) | 1 Redis range plus one SQL over celebrities only |
 | Freshness | Lags until the worker runs | Immediate | Normal: lags. Celebrity: immediate. |
 | Celebrity with many followers | Write storm | Fine | Fine |
 | Viewer following thousands | Fine | Slow reads | Fine |
-| Worker down | New tweets missing until catch-up | No effect | Normal authors' new tweets missing until catch-up |
-| Redis lost | Empty timelines (no rebuild in v1) | No effect | Only celebrity tweets shown |
+| Worker down | New posts missing until catch-up | No effect | Normal authors' new posts missing until catch-up |
+| Redis lost | Empty timelines (no rebuild in v1) | No effect | Only celebrity posts shown |
 
 ---
 
@@ -135,10 +135,10 @@ There is no `tweet.deleted` event. Deletes are handled when the timeline is read
 ### 4.1 Ids, time, and cursor
 
 - Every id is a **UUIDv7** generated in the application (`com.github.f4b6a3:uuid-creator`). Postgres never generates ids.
-- `tweets.created_at` is set from the tweet id's UUIDv7 timestamp, so Postgres and Redis agree on the time.
+- `posts.created_at` is set from the post id's UUIDv7 timestamp, so Postgres and Redis agree on the time.
 - Redis score = UUIDv7 timestamp in epoch milliseconds.
 - UUIDv7 values sort by time, both as Postgres `uuid` and as lowercase strings. Ties inside one millisecond are broken by the rest of the UUID.
-- **Cursor = the `tweetId` of the last item on the previous page.** It is opaque to clients. "Older than cursor" means `id < cursor`.
+- **Cursor = the `postId` of the last item on the previous page.** It is opaque to clients. "Older than cursor" means `id < cursor`.
 
 ### 4.2 Tables (SQL DDL)
 
@@ -148,7 +148,7 @@ The databases themselves are created once by `infra/postgres/01-init-databases.s
 
 ```sql
 CREATE DATABASE users;
-CREATE DATABASE tweets;
+CREATE DATABASE posts;
 ```
 
 **user-service: database `users`**
@@ -176,10 +176,10 @@ CREATE TABLE IF NOT EXISTS follows (
 CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows (followee_id, follower_id);
 ```
 
-**tweet-service: database `tweets`**
+**post-service: database `posts`**
 
 ```sql
-CREATE TABLE IF NOT EXISTS tweets (
+CREATE TABLE IF NOT EXISTS posts (
     id         UUID         PRIMARY KEY,                    -- UUIDv7 from the app
     user_id    UUID         NOT NULL,                       -- author; no FK across services
     text       VARCHAR(140) NOT NULL CHECK (char_length(text) BETWEEN 1 AND 140),
@@ -187,8 +187,8 @@ CREATE TABLE IF NOT EXISTS tweets (
     deleted_at TIMESTAMPTZ                                  -- null = live
 );
 
--- "latest live tweets by these authors, older than cursor"
-CREATE INDEX IF NOT EXISTS idx_tweets_author_live ON tweets (user_id, id DESC) WHERE deleted_at IS NULL;
+-- "latest live posts by these authors, older than cursor"
+CREATE INDEX IF NOT EXISTS idx_posts_author_live ON posts (user_id, id DESC) WHERE deleted_at IS NULL;
 ```
 
 Text length is counted in **Unicode code points** everywhere: `String.codePointCount` in Java, and `char_length` in a UTF-8 Postgres database. An emoji counts as 1.
@@ -215,15 +215,15 @@ All bodies are JSON. Every service also has `GET /health` → `200 {"status":"UP
 | `GET /users/{id}/following` *internal* | — | — | `200 {items:[{id, isCelebrity}]}` (everyone, capped at 5,000) | `404` |
 | `GET /users?ids=a,b,...` *internal* | — | up to 100 ids | `200 {items:[{id, handle, displayName}]}`. Unknown ids are left out. | `400` more than 100 ids |
 
-**tweet-service :8002**
+**post-service :8002**
 
 | Method and path | Header | Request | Response | Errors |
 | --- | --- | --- | --- | --- |
-| `POST /tweets` | required | `{text}` | `201 {id, userId, text, createdAt}` | `400` empty or more than 140 code points |
-| `DELETE /tweets/{id}` | required | — | `204` (also when it's already deleted by its owner) | `404` missing or not the owner |
-| `GET /tweets?ids=a,b,...` *internal* | — | up to 100 ids | `200 {items:[{id, userId, text, createdAt}]}`. Deleted and unknown ids are left out. | `400` more than 100 ids |
-| `GET /users/{id}/tweets?cursor=&limit=` | — | `limit` default 20, max 50 | `200 {items:[...], nextCursor}`: that user's live tweets, newest first (profile timeline) | `400` |
-| `POST /tweets/by-authors` *internal* | — | `{authorIds:[...], before?: tweetId, limit}` (up to 5,000 authors, limit max 800) | `200 {items:[...]}`: live tweets, newest first, `id < before` | `400` |
+| `POST /posts` | required | `{text}` | `201 {id, userId, text, createdAt}` | `400` empty or more than 140 code points |
+| `DELETE /posts/{id}` | required | — | `204` (also when it's already deleted by its owner) | `404` missing or not the owner |
+| `GET /posts?ids=a,b,...` *internal* | — | up to 100 ids | `200 {items:[{id, userId, text, createdAt}]}`. Deleted and unknown ids are left out. | `400` more than 100 ids |
+| `GET /users/{id}/posts?cursor=&limit=` | — | `limit` default 20, max 50 | `200 {items:[...], nextCursor}`: that user's live posts, newest first (profile timeline) | `400` |
+| `POST /posts/by-authors` *internal* | — | `{authorIds:[...], before?: postId, limit}` (up to 5,000 authors, limit max 800) | `200 {items:[...]}`: live posts, newest first, `id < before` | `400` |
 
 `by-authors` is a read that uses `POST`, because 5,000 UUIDs don't fit in a URL. Tomcat's default header limit is 8 KB.
 
@@ -231,7 +231,7 @@ All bodies are JSON. Every service also has `GET /health` → `200 {"status":"UP
 
 | Method and path | Header | Request | Response | Errors |
 | --- | --- | --- | --- | --- |
-| `GET /timeline?cursor=&limit=` | required | `limit` default 20, max 50 | `200 {items:[{tweetId, userId, handle, displayName, text, createdAt}], nextCursor}` | `400` bad cursor or limit |
+| `GET /timeline?cursor=&limit=` | required | `limit` default 20, max 50 | `200 {items:[{postId, userId, handle, displayName, text, createdAt}], nextCursor}` | `400` bad cursor or limit |
 
 `nextCursor` is `null` when there is nothing older. A page may hold fewer than `limit` items after filtering, and still have a `nextCursor`.
 
@@ -262,8 +262,8 @@ unfollow: the same shape with DELETE, -1, and is_celebrity = (follower_count - 1
 ### 4.6 Event formats
 
 ```json
-// topic tweet.created, key = authorId
-{ "eventId": "uuidv7", "tweetId": "uuidv7", "authorId": "uuidv7", "createdAt": "2026-11-01T12:00:00.123Z" }
+// topic post.created, key = authorId
+{ "eventId": "uuidv7", "postId": "uuidv7", "authorId": "uuidv7", "createdAt": "2026-11-01T12:00:00.123Z" }
 
 // topic follow.changed, key = followerId
 { "eventId": "uuidv7", "followerId": "uuidv7", "followeeId": "uuidv7", "action": "follow|unfollow", "at": "2026-11-01T12:01:00Z" }
@@ -271,7 +271,7 @@ unfollow: the same shape with DELETE, -1, and is_celebrity = (follower_count - 1
 
 - Payloads are String JSON. The producer and consumer use String serializers and map the JSON themselves.
 - Malformed messages are logged and skipped, using the default listener error handling.
-- Keys keep one author's tweets, and one follower's follow changes, in order within a partition.
+- Keys keep one author's posts, and one follower's follow changes, in order within a partition.
 - Topics have 3 partitions and replication factor 1, and are created by `kafka-init`. Auto-create is off.
 - Consumer group `fanout-workers`, `auto-offset-reset=earliest`. One listener per topic.
 
@@ -280,9 +280,9 @@ unfollow: the same shape with DELETE, -1, and is_celebrity = (follower_count - 1
 | Item | Value |
 | --- | --- |
 | Key | `timeline:{userId}` (ZSET) |
-| Member | tweetId (UUIDv7 string) |
+| Member | postId (UUIDv7 string) |
 | Score | UUIDv7 epoch millis |
-| Write | `ZADD timeline:{f} <millis> <tweetId>`, then `ZREMRANGEBYRANK timeline:{f} 0 -(TIMELINE_MAX_LENGTH+1)` |
+| Write | `ZADD timeline:{f} <millis> <postId>`, then `ZREMRANGEBYRANK timeline:{f} 0 -(TIMELINE_MAX_LENGTH+1)` |
 | Read | `ZREVRANGEBYSCORE timeline:{v} <cursorMillis or +inf> -inf WITHSCORES LIMIT 0 <F>`, then drop members with `id >= cursor` |
 | Never | No ZREM on unfollow or delete, and no TTL. A missing key means an empty list. |
 
@@ -291,18 +291,18 @@ Re-adding the same member with the same score changes nothing, so fan-out and ba
 ### 4.8 fanout-worker pseudocode
 
 ```text
-on tweet.created(e):
+on post.created(e):
   start = now()
   if FANOUT_STRATEGY == read:
       log fanout skip reason=read-strategy; return
   author = GET user-service /users/{e.authorId}
   if FANOUT_STRATEGY == hybrid and author.isCelebrity:
       log fanout skip reason=celebrity; return
-  score = uuidv7Millis(e.tweetId); cursor = null; written = 0; pages = 0
+  score = uuidv7Millis(e.postId); cursor = null; written = 0; pages = 0
   do:
       page = GET /users/{e.authorId}/followers?cursor=cursor&limit=FANOUT_PAGE_SIZE
       for f in page.ids:
-          ZADD timeline:{f} score e.tweetId
+          ZADD timeline:{f} score e.postId
           ZREMRANGEBYRANK timeline:{f} 0 -(TIMELINE_MAX_LENGTH+1)
           written++
       cursor = page.nextCursor; pages++
@@ -314,13 +314,13 @@ on follow.changed(e):
   if FANOUT_STRATEGY == read: return
   followee = GET /users/{e.followeeId}
   if FANOUT_STRATEGY == hybrid and followee.isCelebrity: return
-  tweets = POST tweet-service /tweets/by-authors {authorIds:[e.followeeId], limit: FOLLOW_BACKFILL_COUNT}
-  for t in tweets: ZADD timeline:{e.followerId} uuidv7Millis(t.id) t.id
+  posts = POST post-service /posts/by-authors {authorIds:[e.followeeId], limit: FOLLOW_BACKFILL_COUNT}
+  for t in posts: ZADD timeline:{e.followerId} uuidv7Millis(t.id) t.id
   ZREMRANGEBYRANK timeline:{e.followerId} 0 -(TIMELINE_MAX_LENGTH+1)
-  log fanout event=follow.changed backfilled=len(tweets)
+  log fanout event=follow.changed backfilled=len(posts)
 ```
 
-**Why backfill takes "latest N" and not "last T minutes":** suppose a tweet is created just before the follow commits. Its fan-out may have read the follower list before the new follower existed, so it misses them. The backfill runs after the follow commits and asks for the newest N tweets, which already includes that tweet. That closes the race with no time window to tune.
+**Why backfill takes "latest N" and not "last T minutes":** suppose a post is created just before the follow commits. Its fan-out may have read the follower list before the new follower existed, so it misses them. The backfill runs after the follow commits and asks for the newest N posts, which already includes that post. That closes the race with no time window to tune.
 
 ### 4.9 timeline-service read pseudocode
 
@@ -329,8 +329,8 @@ GET /timeline(viewer, cursor, limit):
   F = limit + TIMELINE_OVERFETCH                       -- extra room for filtered items
   following = GET user-service /users/{viewer}/following      -- [{id, isCelebrity}]
   followSet = ids(following)
-  if INCLUDE_OWN_TWEETS: followSet += viewer          -- own tweets survive the unfollow filter
-  candidates = []                                      -- items of (tweetId, maybe tweet)
+  if INCLUDE_OWN_POSTS: followSet += viewer          -- own posts survive the unfollow filter
+  candidates = []                                      -- items of (postId, maybe post)
 
   if strategy in (write, hybrid):
       ids = ZREVRANGEBYSCORE timeline:{viewer} (cursor ? millis(cursor) : +inf) -inf LIMIT 0 F
@@ -340,24 +340,24 @@ GET /timeline(viewer, cursor, limit):
   pullAuthors = strategy == read   ? followSet
               : strategy == hybrid ? {f.id for f in following if f.isCelebrity}
               : {}
-  if INCLUDE_OWN_TWEETS: pullAuthors += viewer        -- own tweets are always pulled, never pushed
+  if INCLUDE_OWN_POSTS: pullAuthors += viewer        -- own posts are always pulled, never pushed
   if pullAuthors not empty:
-      candidates += POST tweet-service /tweets/by-authors {authorIds: pullAuthors, before: cursor, limit: F}
+      candidates += POST post-service /posts/by-authors {authorIds: pullAuthors, before: cursor, limit: F}
 
-  candidates = dedupe by tweetId, sort by tweetId desc, take first F
-  hydrate the Redis ids: GET tweet-service /tweets?ids=...   (chunks of 100)
+  candidates = dedupe by postId, sort by postId desc, take first F
+  hydrate the Redis ids: GET post-service /posts?ids=...   (chunks of 100)
   drop items missing from the batch                    -- deleted       -> count dropDeleted
   drop items whose userId not in followSet             -- unfollowed    -> count dropUnfollowed
   page = first `limit` survivors
   profiles = GET user-service /users?ids=<authors of page>
-  nextCursor = page full                 ? last(page).tweetId
-             : more candidates may exist ? last examined candidate's tweetId
+  nextCursor = page full                 ? last(page).postId
+             : more candidates may exist ? last examined candidate's postId
              : null
   log timeline (fields in 4.11)
   return {items, nextCursor}
 ```
 
-- **Own tweets** are pulled on read under every strategy: one extra author in the by-author query, no extra ZADD. They show up immediately (read-your-own-writes), even when the worker is down.
+- **Own posts** are pulled on read under every strategy: one extra author in the by-author query, no extra ZADD. They show up immediately (read-your-own-writes), even when the worker is down.
 - Calls run one after another (sequential `RestClient`). Running them in parallel is a v2 experiment.
 - "More candidates may exist" means some source returned a full `F` items.
 - Correctness of the merge: each source returns its newest `F` items older than the cursor. So after the merge, every item newer than the F-th candidate is present, and nothing is skipped across pages.
@@ -367,13 +367,13 @@ GET /timeline(viewer, cursor, limit):
 | Key | Default (local) | Used by |
 | --- | --- | --- |
 | `PORT` | 8001 / 8002 / 8004 / 8005 | all |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/users` (user), `.../tweets` (tweet) | user, tweet |
-| `DB_USER` / `DB_PASSWORD` | `twitter` / `twitter_local` | user, tweet |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/users` (user), `.../posts` (post) | user, post |
+| `DB_USER` / `DB_PASSWORD` | `murmur` / `murmur_local` | user, post |
 | `REDIS_URL` | `redis://localhost:6379` | timeline, worker |
-| `KAFKA_BROKERS` | `localhost:9092` (containers use `kafka:19092`) | user, tweet, worker |
+| `KAFKA_BROKERS` | `localhost:9092` (containers use `kafka:19092`) | user, post, worker |
 | `KAFKA_CONSUMER_GROUP` | `fanout-workers` | worker |
 | `USER_SERVICE_URL` | `http://localhost:8001` | timeline, worker |
-| `TWEET_SERVICE_URL` | `http://localhost:8002` | timeline, worker |
+| `POST_SERVICE_URL` | `http://localhost:8002` | timeline, worker |
 | `FANOUT_STRATEGY` | `write` | timeline, worker (**restart both** to change) |
 | `CELEBRITY_FOLLOWER_THRESHOLD` | `5` | user |
 | `TIMELINE_MAX_LENGTH` | `800` | worker |
@@ -381,7 +381,7 @@ GET /timeline(viewer, cursor, limit):
 | `FOLLOW_BACKFILL_COUNT` | `50` | worker |
 | `TIMELINE_DEFAULT_LIMIT` / `TIMELINE_MAX_LIMIT` | `20` / `50` | timeline |
 | `TIMELINE_OVERFETCH` | `20` | timeline |
-| `INCLUDE_OWN_TWEETS` | `true` | timeline |
+| `INCLUDE_OWN_POSTS` | `true` | timeline |
 | `JAVA_TOOL_OPTIONS` | (EC2) `-Xms128m -Xmx256m -XX:+UseSerialGC` | all |
 
 These are plain environment variables, with defaults in `application.yml`. There are no Spring profiles.
@@ -389,8 +389,8 @@ These are plain environment variables, with defaults in `application.yml`. There
 ### 4.11 Log lines (what you compare in experiments)
 
 ```text
-fanout   event=tweet.created strategy=write tweetId=… authorId=… celebrity=false followers=200 zadds=200 pages=1 ms=41
-fanout   event=tweet.created strategy=hybrid tweetId=… authorId=… skip=celebrity ms=2
+fanout   event=post.created strategy=write postId=… authorId=… celebrity=false followers=200 zadds=200 pages=1 ms=41
+fanout   event=post.created strategy=hybrid postId=… authorId=… skip=celebrity ms=2
 fanout   event=follow.changed action=follow strategy=write followerId=… followeeId=… backfilled=37 ms=9
 timeline strategy=hybrid viewer=… following=42 celebrities=2 zsetIds=40 pulled=12 candidates=52 dropDeleted=1 dropUnfollowed=3 returned=20 ms=18
 ```
@@ -403,15 +403,15 @@ Each is one line at INFO level, in key=value form, so you can `grep` it and comp
 
 | Case | What happens | How to see it |
 | --- | --- | --- |
-| Worker down (`write` / `hybrid`) | New tweets from normal authors are missing. Kafka keeps the events, and the worker catches up after a restart. | Stop the worker, tweet, read (missing), start the worker, read (present). Under `read` nothing changes. |
-| Backfill race | Closed by "latest N" backfill (4.8) | Follow, then read immediately. The latest tweets appear once the worker runs. |
-| Strategy switch | Data is not migrated. Tweets posted under `read` never entered ZSETs, so after switching back to `write` they are missing. | Experiment E4 |
+| Worker down (`write` / `hybrid`) | New posts from normal authors are missing. Kafka keeps the events, and the worker catches up after a restart. | Stop the worker, post, read (missing), start the worker, read (present). Under `read` nothing changes. |
+| Backfill race | Closed by "latest N" backfill (4.8) | Follow, then read immediately. The latest posts appear once the worker runs. |
+| Strategy switch | Data is not migrated. Posts posted under `read` never entered ZSETs, so after switching back to `write` they are missing. | Experiment E4 |
 | Delete | The ZSET still has the id. The read drops it (`dropDeleted`). | `redis-cli ZSCORE` shows it; the timeline doesn't. |
-| Unfollow | The ZSET still has their tweets. The read drops them (`dropUnfollowed`). Re-follow brings them back. | Experiment E6 |
-| Celebrity flip **up** (`hybrid`) | Old tweets stay in ZSETs. New tweets arrive by pull. Nothing is lost. | Raise followers past the threshold |
-| Celebrity flip **down** (`hybrid`) | Tweets posted while they were a celebrity were never pushed and are no longer pulled, so they **vanish** from timelines. | Experiment E5. This is a known gap in hybrid designs. |
-| Redis flushed | `write`: empty timelines. `hybrid`: only celebrity tweets. `read`: no effect. No rebuild in v1. | `redis-cli FLUSHALL` |
-| Event lost (crash between commit and publish) | That tweet is never fanned out. | Hard to trigger; read about the outbox pattern (§9). |
+| Unfollow | The ZSET still has their posts. The read drops them (`dropUnfollowed`). Re-follow brings them back. | Experiment E6 |
+| Celebrity flip **up** (`hybrid`) | Old posts stay in ZSETs. New posts arrive by pull. Nothing is lost. | Raise followers past the threshold |
+| Celebrity flip **down** (`hybrid`) | Posts posted while they were a celebrity were never pushed and are no longer pulled, so they **vanish** from timelines. | Experiment E5. This is a known gap in hybrid designs. |
+| Redis flushed | `write`: empty timelines. `hybrid`: only celebrity posts. `read`: no effect. No rebuild in v1. | `redis-cli FLUSHALL` |
+| Event lost (crash between commit and publish) | That post is never fanned out. | Hard to trigger; read about the outbox pattern (§9). |
 
 ---
 
@@ -422,7 +422,7 @@ Each is one line at INFO level, in key=value form, so you can `grep` it and comp
 The full folder tree, package structure, and code rules are in **AGENTS.md**, which agents read first. In short:
 
 - `libs/common`, plus `services/<name>`, each using the standard Maven layout
-- Base package `io.github.<github-user>.twitter.<module>`, organized by feature (`user/`, `follow/`, `tweet/`, `timeline/`, `fanout/`)
+- Base package `com.murmur.<module>`, organized by feature (`user/`, `follow/`, `post/`, `timeline/`, `fanout/`)
 - `schema.sql` and `application.yml` under `src/main/resources`
 
 Each service builds `target/app.jar` (Maven `finalName` = `app`), so Compose can mount a fixed path.
@@ -432,7 +432,7 @@ Each service builds `target/app.jar` (Maven `finalName` = `app`), so Compose can
 Infrastructure starts by default. The four services start only with `--profile apps`, which EC2 uses. Locally you usually run the services from the IDE or with `java -jar`.
 
 ```yaml
-name: twitter-clone
+name: murmur
 
 x-app: &app
   image: eclipse-temurin:21-jre          # verify before use
@@ -444,23 +444,23 @@ x-app: &app
     KAFKA_BROKERS: kafka:19092
     REDIS_URL: redis://redis:6379
     USER_SERVICE_URL: http://user-service:8001
-    TWEET_SERVICE_URL: http://tweet-service:8002
+    POST_SERVICE_URL: http://post-service:8002
     FANOUT_STRATEGY: ${FANOUT_STRATEGY:-write}
-    DB_USER: ${DB_USER:-twitter}
-    DB_PASSWORD: ${DB_PASSWORD:-twitter_local}
+    DB_USER: ${DB_USER:-murmur}
+    DB_PASSWORD: ${DB_PASSWORD:-murmur_local}
 
 services:
   postgres:
     image: postgres:16-alpine            # verify before use
     ports: ["127.0.0.1:5432:5432"]
     environment:
-      POSTGRES_USER: twitter
-      POSTGRES_PASSWORD: twitter_local
+      POSTGRES_USER: murmur
+      POSTGRES_PASSWORD: murmur_local
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/01-init-databases.sql:/docker-entrypoint-initdb.d/01-init-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U twitter"]
+      test: ["CMD-SHELL", "pg_isready -U murmur"]
       interval: 5s
       retries: 10
 
@@ -507,7 +507,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        for t in tweet.created follow.changed; do
+        for t in post.created follow.changed; do
           /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server kafka:19092 \
             --topic "$$t" --partitions 3 --replication-factor 1
         done
@@ -524,21 +524,21 @@ services:
       CELEBRITY_FOLLOWER_THRESHOLD: ${CELEBRITY_FOLLOWER_THRESHOLD:-5}
     depends_on: { postgres: { condition: service_healthy }, kafka-init: { condition: service_completed_successfully } }
 
-  tweet-service:
+  post-service:
     <<: *app
     ports: ["127.0.0.1:8002:8002"]
-    volumes: ["./services/tweet-service/target/app.jar:/app/app.jar:ro"]
+    volumes: ["./services/post-service/target/app.jar:/app/app.jar:ro"]
     environment:
       <<: *app-env
       PORT: 8002
-      DB_URL: ${TWEETS_DB_URL:-jdbc:postgresql://postgres:5432/tweets}
+      DB_URL: ${POSTS_DB_URL:-jdbc:postgresql://postgres:5432/posts}
     depends_on: { postgres: { condition: service_healthy }, kafka-init: { condition: service_completed_successfully } }
 
   timeline-service:
     <<: *app
     ports: ["127.0.0.1:8004:8004"]
     volumes: ["./services/timeline-service/target/app.jar:/app/app.jar:ro"]
-    environment: { <<: *app-env, PORT: 8004, INCLUDE_OWN_TWEETS: "${INCLUDE_OWN_TWEETS:-true}" }
+    environment: { <<: *app-env, PORT: 8004, INCLUDE_OWN_POSTS: "${INCLUDE_OWN_POSTS:-true}" }
     depends_on: { redis: { condition: service_healthy } }
 
   fanout-worker:
@@ -562,11 +562,11 @@ Every port binds to `127.0.0.1`, so even on EC2 nothing listens on a public inte
 
 ```bash
 export FANOUT_STRATEGY=write
-export DB_USER=twitter DB_PASSWORD=twitter_local
+export DB_USER=murmur DB_PASSWORD=murmur_local
 export KAFKA_BROKERS=localhost:9092 REDIS_URL=redis://localhost:6379
-export USER_SERVICE_URL=http://localhost:8001 TWEET_SERVICE_URL=http://localhost:8002
+export USER_SERVICE_URL=http://localhost:8001 POST_SERVICE_URL=http://localhost:8002
 export CELEBRITY_FOLLOWER_THRESHOLD=5
-# per service: PORT and DB_URL (jdbc:postgresql://localhost:5432/users or /tweets)
+# per service: PORT and DB_URL (jdbc:postgresql://localhost:5432/users or /posts)
 ```
 
 ### 6.4 Startup order
@@ -575,7 +575,7 @@ export CELEBRITY_FOLLOWER_THRESHOLD=5
 1. docker compose up -d                 # postgres, redis, kafka, kafka-init
 2. docker compose ps                    # wait for healthy; kafka-init exited 0
 3. user-service  :8001
-4. tweet-service :8002
+4. post-service :8002
 5. fanout-worker :8005
 6. timeline-service :8004
 ```
@@ -583,7 +583,7 @@ export CELEBRITY_FOLLOWER_THRESHOLD=5
 Checks:
 
 ```bash
-docker compose exec postgres psql -U twitter -l           # users, tweets listed
+docker compose exec postgres psql -U murmur -l           # users, posts listed
 docker compose exec redis redis-cli ping
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka:19092
 curl -s localhost:8001/health
@@ -597,14 +597,14 @@ It creates the data the experiments need, using only the public routes:
 - An author `normal_author` followed by `NORMAL_FOLLOWERS` (50) users
 - An author `celeb_author` followed by `CELEB_FOLLOWERS` (150) users
 - A `viewer` user who follows both authors plus 20 random users
-- `TWEETS_PER_USER` (2) tweets for each followed user
+- `POSTS_PER_USER` (2) posts for each followed user
 - It writes the ids to `scripts/seed.out.env`, so experiments can `source` them.
 
 For experiments, run user-service with `CELEBRITY_FOLLOWER_THRESHOLD=100` so `celeb_author` crosses it and `normal_author` doesn't.
 
 ### 6.6 Smoke test (`scripts/smoke.sh`, `FANOUT_STRATEGY=write`)
 
-The follow happens **before** the tweet, so the result never depends on backfill timing. Start from a clean state (`docker compose down -v`), because handles are unique.
+The follow happens **before** the post, so the result never depends on backfill timing. Start from a clean state (`docker compose down -v`), because handles are unique.
 
 ```bash
 U=http://localhost:8001; T=http://localhost:8002; TL=http://localhost:8004
@@ -616,17 +616,17 @@ GRACE=$(curl -s -X POST $U/users -H "$J" -d '{"handle":"grace","displayName":"Gr
 curl -s -X POST $U/users/$ADA/follow -H "X-User-Id: $GRACE" | jq .   # changed: true
 curl -s -X POST $U/users/$ADA/follow -H "X-User-Id: $GRACE" | jq .   # changed: false (idempotent)
 
-TWEET=$(curl -s -X POST $T/tweets -H "$J" -H "X-User-Id: $ADA" -d '{"text":"Hello from Ada!"}' | jq -r .id)
+POST=$(curl -s -X POST $T/posts -H "$J" -H "X-User-Id: $ADA" -d '{"text":"Hello from Ada!"}' | jq -r .id)
 sleep 2
-curl -s "$TL/timeline?limit=10" -H "X-User-Id: $GRACE" | jq .       # Ada's tweet
-curl -s "$TL/timeline?limit=10" -H "X-User-Id: $ADA" | jq .         # Ada sees her own tweet
+curl -s "$TL/timeline?limit=10" -H "X-User-Id: $GRACE" | jq .       # Ada's post
+curl -s "$TL/timeline?limit=10" -H "X-User-Id: $ADA" | jq .         # Ada sees her own post
 docker compose exec redis redis-cli ZRANGE timeline:$GRACE 0 -1 WITHSCORES
 
 curl -s -X DELETE $U/users/$ADA/follow -H "X-User-Id: $GRACE" | jq .
 curl -s "$TL/timeline?limit=10" -H "X-User-Id: $GRACE" | jq .       # empty; the ZSET still has it
 curl -s -X POST $U/users/$ADA/follow -H "X-User-Id: $GRACE" | jq .
 
-curl -s -o /dev/null -w "%{http_code}\n" -X DELETE $T/tweets/$TWEET -H "X-User-Id: $ADA"   # 204
+curl -s -o /dev/null -w "%{http_code}\n" -X DELETE $T/posts/$POST -H "X-User-Id: $ADA"   # 204
 curl -s "$TL/timeline?limit=10" -H "X-User-Id: $GRACE" | jq .       # gone
 ```
 
@@ -634,7 +634,7 @@ Repeat it with `FANOUT_STRATEGY=read` and `hybrid` (restart the worker and timel
 
 ### 6.7 Secrets and the public repo
 
-- Committed: `.env.example` with placeholder values, and the local-only defaults (`twitter` / `twitter_local`) in Compose and `application.yml`. They protect nothing, because every port binds to `127.0.0.1`.
+- Committed: `.env.example` with placeholder values, and the local-only defaults (`murmur` / `murmur_local`) in Compose and `application.yml`. They protect nothing, because every port binds to `127.0.0.1`.
 - Never committed: `.env`, `.env.local`, any RDS password, AWS keys. `.gitignore` lists `.env`, `.env.*` (except `.env.example`), `target/`, and `scripts/seed.out.env`.
 - EC2 needs no AWS keys at all: the instance role provides credentials.
 - Before every push: `git diff --cached | grep -iE "password|secret|AKIA"` should find nothing new.
@@ -662,7 +662,7 @@ Repeat it with `FANOUT_STRATEGY=read` and `hybrid` (restart the worker and timel
                                                                    │  SG: inbound none, outbound all
                                                                    │  Amazon Linux 2023, Docker Compose
                                                                    │   postgres  redis  kafka
-                                                                   │   user tweet timeline fanout  (127.0.0.1 only)
+                                                                   │   user post timeline fanout  (127.0.0.1 only)
                                                                    │
                                         Stage 2 (optional) ───────▶ RDS PostgreSQL (private, SG allows only the EC2 SG)
 ```
@@ -694,35 +694,35 @@ Rough total: 3 sessions a week of 3 hours for 6 months ≈ 80 hours of EC2 ≈ $
 
 ### 7.5 Stage 1: EC2 (console or CLI)
 
-**IAM role**: `twitter-dev-ec2-role`, trusted by EC2, with the policy `AmazonSSMManagedInstanceCore`. For the optional CloudWatch Logs, also allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`.
+**IAM role**: `murmur-dev-ec2-role`, trusted by EC2, with the policy `AmazonSSMManagedInstanceCore`. For the optional CloudWatch Logs, also allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`.
 
 ```bash
-aws iam create-role --role-name twitter-dev-ec2-role \
+aws iam create-role --role-name murmur-dev-ec2-role \
   --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-aws iam attach-role-policy --role-name twitter-dev-ec2-role \
+aws iam attach-role-policy --role-name murmur-dev-ec2-role \
   --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-aws iam create-instance-profile --instance-profile-name twitter-dev-ec2-profile
-aws iam add-role-to-instance-profile --instance-profile-name twitter-dev-ec2-profile --role-name twitter-dev-ec2-role
+aws iam create-instance-profile --instance-profile-name murmur-dev-ec2-profile
+aws iam add-role-to-instance-profile --instance-profile-name murmur-dev-ec2-profile --role-name murmur-dev-ec2-role
 ```
 
 **Security group** in the default VPC, with no inbound rules:
 
 ```bash
 VPC=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
-SG=$(aws ec2 create-security-group --group-name twitter-dev-sg --description "no inbound" --vpc-id $VPC --query GroupId --output text)
+SG=$(aws ec2 create-security-group --group-name murmur-dev-sg --description "no inbound" --vpc-id $VPC --query GroupId --output text)
 # Default outbound allow-all is kept. Add no ingress rules.
 ```
 
-**Launch** (console: Amazon Linux 2023, a Free-plan-eligible type, 20 GB gp3, the default VPC public subnet, auto-assign public IP on, the instance profile above, no key pair, IMDSv2 required, tag `Project=twitter-dev`):
+**Launch** (console: Amazon Linux 2023, a Free-plan-eligible type, 20 GB gp3, the default VPC public subnet, auto-assign public IP on, the instance profile above, no key pair, IMDSv2 required, tag `Project=murmur-dev`):
 
 ```bash
 AMI=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)
 ID=$(aws ec2 run-instances --image-id $AMI --instance-type m7i-flex.large \
-  --security-group-ids $SG --iam-instance-profile Name=twitter-dev-ec2-profile \
+  --security-group-ids $SG --iam-instance-profile Name=murmur-dev-ec2-profile \
   --associate-public-ip-address \
   --metadata-options HttpTokens=required \
   --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Project,Value=twitter-dev}]' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Project,Value=murmur-dev}]' \
   --query 'Instances[0].InstanceId' --output text)
 echo $ID
 ```
@@ -744,7 +744,7 @@ sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-
 **Deploy:**
 
 ```bash
-git clone https://github.com/<you>/twitter-clone.git && cd twitter-clone   # public repo, no token needed
+git clone https://github.com/<you>/murmur.git && cd murmur   # public repo, no token needed
 ./mvnw -q package -DskipTests
 docker compose --profile apps up -d
 docker compose ps
@@ -761,30 +761,30 @@ aws ssm start-session --target $ID --document-name AWS-StartPortForwardingSessio
 curl -s localhost:18004/timeline -H "X-User-Id: <id>"
 ```
 
-**Optional logs**: add `logging: { driver: awslogs, options: { awslogs-region: ap-south-1, awslogs-group: twitter-dev, awslogs-create-group: "true" } }` to the app services, and set the log group's retention to 1 day.
+**Optional logs**: add `logging: { driver: awslogs, options: { awslogs-region: ap-south-1, awslogs-group: murmur-dev, awslogs-create-group: "true" } }` to the app services, and set the log group's retention to 1 day.
 
 **After every session:** `aws ec2 stop-instances --instance-ids $ID`. Start it again with `start-instances`. Docker restarts the containers by itself (`restart: unless-stopped`), and the data volumes survive.
 
 ### 7.6 Stage 2 (optional): Postgres on RDS
 
-1. Create security group `twitter-dev-rds-sg` with inbound TCP 5432 **from `twitter-dev-sg` only**.
+1. Create security group `murmur-dev-rds-sg` with inbound TCP 5432 **from `murmur-dev-sg` only**.
 2. RDS → Create database:
    - PostgreSQL 16, **Free tier** template, smallest instance (`db.t4g.micro` / `db.t3.micro`), 20 GB storage
    - Single-AZ, **Public access: No**, the security group above
    - Performance Insights and Enhanced Monitoring **off**; backup retention 1 day or 0
 3. From the EC2 instance, create the databases:
-   `docker run --rm -it postgres:16-alpine psql "host=<endpoint> user=twitter sslmode=require" -c "CREATE DATABASE users" -c "CREATE DATABASE tweets"`
+   `docker run --rm -it postgres:16-alpine psql "host=<endpoint> user=murmur sslmode=require" -c "CREATE DATABASE users" -c "CREATE DATABASE posts"`
 4. Create `.env` next to the compose file (`chmod 600`):
 
    ```bash
    USERS_DB_URL=jdbc:postgresql://<endpoint>:5432/users?sslmode=require
-   TWEETS_DB_URL=jdbc:postgresql://<endpoint>:5432/tweets?sslmode=require
-   DB_USER=twitter
+   POSTS_DB_URL=jdbc:postgresql://<endpoint>:5432/posts?sslmode=require
+   DB_USER=murmur
    DB_PASSWORD=<rds password>
    ```
 
    RDS for PostgreSQL 15+ forces SSL by default, hence `sslmode=require` (verify before use).
-5. Run `docker compose --profile apps up -d --force-recreate user-service tweet-service`, then `docker compose stop postgres`. Each service creates its tables on startup from `schema.sql`.
+5. Run `docker compose --profile apps up -d --force-recreate user-service post-service`, then `docker compose stop postgres`. Each service creates its tables on startup from `schema.sql`.
 6. When you're done learning RDS: **delete** the instance (no final snapshot) and delete any manual snapshots.
 
 ### 7.7 Local → AWS mapping
@@ -803,24 +803,24 @@ curl -s localhost:18004/timeline -H "X-User-Id: <id>"
 - [ ] `aws ec2 terminate-instances --instance-ids $ID` (deletes the root EBS volume)
 - [ ] RDS instance deleted, and no snapshots left (RDS → Snapshots)
 - [ ] EC2 → Volumes, Snapshots, and Elastic IPs all empty
-- [ ] CloudWatch log group `twitter-dev` deleted
-- [ ] Security groups `twitter-dev-sg` and `twitter-dev-rds-sg` deleted, plus the IAM role and instance profile
+- [ ] CloudWatch log group `murmur-dev` deleted
+- [ ] Security groups `murmur-dev-sg` and `murmur-dev-rds-sg` deleted, plus the IAM role and instance profile
 - [ ] Billing shows no running resources; Budgets alert stays in place
 
 ---
 
 ## 8. Experiments
 
-Run each one locally first and then on EC2 with larger numbers. Record the `fanout` and `timeline` log lines. For E1 and E2, set `INCLUDE_OWN_TWEETS=false` so `pulled` counts only followed authors.
+Run each one locally first and then on EC2 with larger numbers. Record the `fanout` and `timeline` log lines. For E1 and E2, set `INCLUDE_OWN_POSTS=false` so `pulled` counts only followed authors.
 
 | # | Experiment | Steps | What to observe |
 | --- | --- | --- | --- |
-| E1 | Push vs pull for a normal author | Seed. `write`: `normal_author` tweets; viewer reads. Restart both services with `read`, tweet again, read again. | `write`: `zadds=50`, fast read with `pulled=0`. `read`: worker `skip`, read shows `pulled>0` and higher `ms`. |
+| E1 | Push vs pull for a normal author | Seed. `write`: `normal_author` posts; viewer reads. Restart both services with `read`, post again, read again. | `write`: `zadds=50`, fast read with `pulled=0`. `read`: worker `skip`, read shows `pulled>0` and higher `ms`. |
 | E2 | Celebrity write storm | Threshold 100, `celeb_author` has 150 followers (scale up on EC2, e.g. 5,000). Compare `write` with `hybrid`. | `write`: `zadds=150` and worker `ms` grows with followers. `hybrid`: `skip=celebrity`, and the read shows `celebrities=1 pulled>0`. |
-| E3 | Worker down | `write`. Stop fanout-worker, post 3 tweets, read, start the worker, read. | Missing, then present. Repeat under `read`: no difference. |
+| E3 | Worker down | `write`. Stop fanout-worker, post 3 posts, read, start the worker, read. | Missing, then present. Repeat under `read`: no difference. |
 | E4 | Strategy switch | `write` → post A. `read` → post B. `write` → read. | A present, B **missing** (it never entered the ZSET). Explains why real systems need a rebuild or migration. |
-| E5 | Celebrity flip down | `hybrid`, `celeb_author` tweets C. Unfollow enough users to drop below the threshold. Read. | C vanishes for remaining followers. This is the known hybrid gap. |
-| E6 | Lazy filtering | Delete a tweet and unfollow an author. Read, and check `redis-cli ZSCORE`. | Members still in Redis, while `dropDeleted` and `dropUnfollowed` are above 0 in the log. |
+| E5 | Celebrity flip down | `hybrid`, `celeb_author` posts C. Unfollow enough users to drop below the threshold. Read. | C vanishes for remaining followers. This is the known hybrid gap. |
+| E6 | Lazy filtering | Delete a post and unfollow an author. Read, and check `redis-cli ZSCORE`. | Members still in Redis, while `dropDeleted` and `dropUnfollowed` are above 0 in the log. |
 
 Stretch on EC2: run 10,000 seed users and time the timeline read under `read` versus `hybrid` while the viewer follows 1,000 users.
 
@@ -834,12 +834,12 @@ Stretch on EC2: run 10,000 seed users and time the timeline read under `read` ve
   - `POST /media/uploads` creates a `pending` row and returns a presigned PUT URL with a signed Content-Length (at most `MEDIA_MAX_BYTES`).
   - The client PUTs the bytes straight to MinIO locally or S3 on AWS. Objects use the key `media/{userId}/{mediaId}`.
   - `POST /media/{id}/finalize` checks the object with HeadObject and marks it `ready`.
-  - Tweets carry up to 4 `mediaIds`, accepted without checking. Timeline hydrates them with `GET /media?ids=`, keeping only `ready` media owned by the tweet's author.
+  - Posts carry up to 4 `mediaIds`, accepted without checking. Timeline hydrates them with `GET /media?ids=`, keeping only `ready` media owned by the post's author.
   - A sweeper deletes `pending` items older than 24 hours.
   - On AWS, S3 is cheap but mostly not free; keep usage tiny.
 - **Auth.** HS256 JWT locally and Cognito on AWS. Requests resolve `sub` to a user id through an internal user-service route. Cognito access tokens have `client_id`, not `aud`.
-- **Redis hygiene.** ZREM on unfollow, and a `tweet.deleted` consumer.
-- **Rebuild.** `POST /admin/timelines/{userId}/rebuild` from follows and tweets, to compare rebuild cost against fan-out and to fix E4.
+- **Redis hygiene.** ZREM on unfollow, and a `post.deleted` consumer.
+- **Rebuild.** `POST /admin/timelines/{userId}/rebuild` from follows and posts, to compare rebuild cost against fan-out and to fix E4.
 - **Outbox pattern** for publishing events without losing them, and **parallel hydration** with virtual threads.
 - **Managed AWS.** ECS, MSK, and ElastiCache cost money: about $0.75/h for MSK Serverless. These are for reading about, not for this account.
 
@@ -851,20 +851,20 @@ Stretch on EC2: run 10,000 seed users and time the timeline read under `read` ve
 | Removed JWT, Cognito, and the internal token; added `X-User-Id` | Auth isn't the learning goal; the network is the boundary |
 | Removed Flyway; added `schema.sql` | One less tool; dropping the volume is fine for learning |
 | Removed API Gateway, the load balancer, and rate limits | They cost money and aren't the learning goal |
-| Removed `tweet.deleted` | Lazy filtering covers deletes |
+| Removed `post.deleted` | Lazy filtering covers deletes |
 | Added `FANOUT_STRATEGY` | It's the core experiment |
 | Backfill is "latest N" instead of "last 300 s" | Closes the race and gives a sensible timeline after a follow |
-| Cursor is the tweetId | UUIDv7 is time-ordered and unique, so there are no same-millisecond ties |
-| `POST /tweets/by-authors` | Large author lists don't fit in a URL |
+| Cursor is the postId | UUIDv7 is time-ordered and unique, so there are no same-millisecond ties |
+| `POST /posts/by-authors` | Large author lists don't fit in a URL |
 | Text counted in code points | Java and Postgres count the same way |
 | AWS: one EC2 instance, SSM only, optional RDS | $0 on the Free plan, nothing public, real AWS practice |
 | Apache Kafka image instead of Bitnami | Bitnami's free images moved (verify) |
-| Own tweets in the home timeline, pulled on read (`INCLUDE_OWN_TWEETS`) | Easier testing and read-your-own-writes; pulling costs one author in an existing query, with no extra fan-out. The profile route stays for "my tweets only". |
+| Own posts in the home timeline, pulled on read (`INCLUDE_OWN_POSTS`) | Easier testing and read-your-own-writes; pulling costs one author in an existing query, with no extra fan-out. The profile route stays for "my posts only". |
 | Public repo, no secrets committed | Only local dev defaults are in git; real values live in `.env` (gitignored) |
 
 ### Resolved questions
 
-1. The home timeline includes the viewer's own tweets (pulled on read, switchable). `GET /users/{id}/tweets` shows only that user's tweets.
+1. The home timeline includes the viewer's own posts (pulled on read, switchable). `GET /users/{id}/posts` shows only that user's posts.
 2. The repo is public on GitHub. No secrets are committed (see §6.7).
 3. Region: `ap-south-1` (Mumbai).
 4. Spring Boot 4.1.2 is fixed. Check the Boot 4 starter names (webmvc, kafka, data-redis, jdbc) when you write the POM (verify before use).
