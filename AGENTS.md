@@ -11,6 +11,13 @@ This repo is a learning project. Read this file first, then only the DESIGN.md s
 - Never commit secrets. `.env*` files are gitignored, except `.env.example`.
 - When you're done, say which "Done when" check you ran and what it printed.
 
+## Safety (always)
+- **Ask before** installing or downloading anything: brew, npm/npx, pip, curl/wget, new Docker images, or new Maven dependencies.
+- Never run `curl … | sh`, `sudo`, or commands outside this repo. Never change global config (`~/.docker`, `~/.m2/settings.xml`, shell profiles).
+- Allowed sources only: Maven Central, official Docker images at the tags pinned in DESIGN.md, and libraries listed below.
+- Never read, print, or commit `.env*` (except `.env.example`), `~/.aws`, or private keys.
+- Use `git push` and `gh` only through the `/ship`, `/review-pr` and `/fix-review` skills. Never merge to `main`; the human merges.
+
 ## Stack (fixed)
 Java 21 · Spring Boot 4.1.2 · Maven multi-module with wrapper · Spring MVC · JdbcClient · StringRedisTemplate · KafkaTemplate/@KafkaListener (String JSON) · RestClient · uuid-creator (UUIDv7) · JUnit 5 + MockMvc + AssertJ.
 Not allowed: JPA/Hibernate, Lombok, WebFlux/WebClient, Flyway, MapStruct, Feign.

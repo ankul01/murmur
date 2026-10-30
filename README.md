@@ -23,3 +23,4 @@ Don't install `spring-boot-patterns`-style skills that teach layered packages or
 - **Cursor** (coding) and **Antigravity** (review) both read `AGENTS.md` automatically. `CLAUDE.md` only matters if you also use Claude Code.
 - **Review in Antigravity:** mention `@review` in the agent box, which uses `.agents/rules/review.md`.
 - Run one task per branch. If two Cursor windows work at the same time, give each its own `git worktree`.
+- Task loop: Cursor `/ship T02` → Antigravity `/review-pr <PR#>` → Cursor `/fix-review <PR#>` → repeat at most twice → you merge with `gh pr merge <PR#> --squash --delete-branch`.

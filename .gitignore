@@ -8,3 +8,5 @@ target/
 !.env.example
 scripts/seed.out.env
 logs/
+*.zip
+
