@@ -18,6 +18,7 @@
   <name>murmur</name>
 
   <modules>
+    <module>libs/common</module>
     <module>services/user-service</module>
   </modules>
 

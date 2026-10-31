@@ -5,3 +5,10 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/users}
+    username: ${DB_USER:murmur}
+    password: ${DB_PASSWORD:murmur_local}
+  sql:
+    init:
+      mode: always
