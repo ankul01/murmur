@@ -74,7 +74,7 @@ services/user-service/
 - **Logging:** SLF4J, using only the key=value lines from DESIGN §4.11, plus errors.
 - **Naming:** `XxxController`, `XxxService`, `XxxRepository`, `XxxRequest`, `XxxResponse`, `XxxEvent`, `XxxClient` (RestClient wrapper).
 - **Comments:** only explain *why*. No Javadoc on obvious methods.
-- **Tests:** they mirror the main package. Use `@WebMvcTest(XxxController.class)` with `@MockitoBean` for the service, and `MockRestServiceServer` for clients. Name tests like `create_returns409_whenHandleTaken`.
+- **Tests:** they mirror the main package. Use `@WebMvcTest(XxxController.class)` with `@MockitoBean` for the service, and `MockRestServiceServer` for clients. Importing the service and mocking its repository is allowed when the test checks validation, normalization, or id generation. Name tests like `create_returns409_whenHandleTaken`.
 
 ## Sample: `POST /users` (imports omitted; check Boot 4 test package names)
 ```java

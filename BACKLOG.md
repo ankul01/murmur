@@ -47,7 +47,7 @@ Built from DESIGN.md. Each task adds one idea and leaves the system runnable. Co
   - Shared module with the UUIDv7 helper
   - `users` table
   - `POST /users`, `GET /users/{id}`
-- **Done when:** `curl -X POST localhost:8001/users -d '{"handle":"Ada","displayName":"Ada"}'` → `201` with a UUIDv7 id and handle `ada`. Repeating it → `409`. MockMvc test for a bad handle → `400`.
+- **Done when:** `curl -X POST localhost:8001/users -H 'Content-Type: application/json' -d '{"handle":"Ada","displayName":"Ada"}'` → `201` with a UUIDv7 id and handle `ada`. Repeating it → `409`. MockMvc test for a bad handle → `400`.
 - **Learn:** `spring.sql.init`, UUIDv7 layout.
 - **Out:** follows, the `X-User-Id` header.
 

@@ -2,6 +2,7 @@ package com.murmur.userservice.user;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -52,6 +54,14 @@ class UserControllerTest {
                         {"handle":"no","displayName":"Ada"}""")).andExpect(status().isBadRequest());
 
         verifyNoInteractions(repository);
+    }
+
+    @Test
+    void create_returns409_whenHandleTaken() throws Exception {
+        doThrow(new DuplicateKeyException("duplicate")).when(repository).insert(any());
+
+        mvc.perform(post("/users").contentType(APPLICATION_JSON).content("""
+                        {"handle":"Ada","displayName":"Ada"}""")).andExpect(status().isConflict());
     }
 
     @Test
